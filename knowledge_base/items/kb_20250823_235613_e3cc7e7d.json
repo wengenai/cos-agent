@@ -1,0 +1,16 @@
+{
+  "id": "kb_20250823_235613_e3cc7e7d",
+  "title": "System Architecture Guidelines",
+  "content": "\n                Best practices for system architecture:\n                \n                1. Separation of Concerns - Each component should have a single responsibility\n                2. Loose Coupling - Components should be independently deployable and testable\n                3. High Cohesion - Related functionality should be grouped together\n                4. Scalability - Design for growth and performance requirements\n                5. Security by Design - Security considerations at every layer\n                6. Observability - Built-in monitoring, logging, and tracing\n                7. Fault Tolerance - Graceful degradation and error recovery\n                8. Documentation - Clear documentation for all components\n                ",
+  "category": "software_engineering",
+  "tags": [
+    "architecture",
+    "best_practices",
+    "design_patterns"
+  ],
+  "source": "internal_guidelines",
+  "created_at": "2025-08-23T23:56:13.811985",
+  "updated_at": "2025-08-23T23:56:13.811987",
+  "version": 1,
+  "metadata": {}
+}

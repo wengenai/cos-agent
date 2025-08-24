@@ -1,0 +1,17 @@
+{
+  "id": "kb_20250823_235613_2980c90f",
+  "title": "LangGraph Implementation Patterns",
+  "content": "\n                Common patterns for LangGraph applications:\n                \n                1. Plan-Execute Pattern:\n                   - Separate planning and execution phases\n                   - Planning creates detailed step-by-step plans\n                   - Execution follows plans with dynamic routing\n                \n                2. Multi-Agent Collaboration:\n                   - Specialized agents for different tasks\n                   - Message passing between agents\n                   - Coordination and orchestration layers\n                \n                3. State Management:\n                   - Comprehensive state schemas\n                   - Checkpointing for resumability\n                   - State validation and consistency\n                \n                4. Tool Integration:\n                   - Native tool calling\n                   - Error handling for tool failures\n                   - Tool result validation\n                \n                5. Human-in-the-Loop:\n                   - Breakpoints for human input\n                   - Approval workflows\n                   - Interactive debugging\n                ",
+  "category": "langgraph",
+  "tags": [
+    "langgraph",
+    "patterns",
+    "implementation",
+    "workflows"
+  ],
+  "source": "development_experience",
+  "created_at": "2025-08-23T23:56:13.812002",
+  "updated_at": "2025-08-23T23:56:13.812003",
+  "version": 1,
+  "metadata": {}
+}
