@@ -5,7 +5,6 @@ LangGraph Studio App Entry Point
 import os
 from dotenv import load_dotenv
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.memory import MemorySaver
 
 # Load environment variables
 load_dotenv()
@@ -25,7 +24,7 @@ def create_graph():
     
     # Create agent nodes with MCP integration
     nodes = AgentNodes(
-        model_name=os.getenv("DEFAULT_MODEL", "gpt-4"),
+        model_name=os.getenv("DEFAULT_MODEL", "claude-3-5-sonnet-20241022"),
         mcp_client=default_multi_mcp_manager,
         prompt_manager=prompt_manager,
         knowledge_base=knowledge_base
@@ -106,9 +105,8 @@ def create_graph():
     # End the workflow
     graph.add_edge("completion", END)
     
-    # Compile with checkpointer for Studio
-    checkpointer = MemorySaver()
-    return graph.compile(checkpointer=checkpointer)
+    # Compile without checkpointer for Studio (LangGraph API handles persistence)
+    return graph.compile()
 
 # Create the graph instance for Studio
 graph = create_graph()
