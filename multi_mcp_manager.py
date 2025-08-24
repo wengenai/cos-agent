@@ -31,37 +31,157 @@ class MultiMCPManager:
         self.connected_servers: List[str] = []
     
     def _load_server_configs(self) -> Dict[str, MCPServerConfig]:
-        """Load MCP server configurations from environment variables"""
+        """Load MCP server configurations from environment variables
+        
+        Supports both predefined servers and dynamic server discovery.
+        For dynamic servers, use pattern: MCP_SERVER_{NAME}_URL, MCP_SERVER_{NAME}_PORT, MCP_SERVER_{NAME}_DESC
+        """
         configs = {}
         
-        # EDFX MCP Server
-        if os.getenv("EDFX_MCP_URL"):
-            configs["edfx"] = MCPServerConfig(
-                name="EDFX-MCP",
-                url=os.getenv("EDFX_MCP_URL"),
-                port=int(os.getenv("EDFX_MCP_PORT", "8080")),
-                description="Company risk profile analysis tools"
-            )
+        # === Predefined MCP Servers ===
+        predefined_servers = [
+            {
+                "id": "edfx",
+                "url_var": "EDFX_MCP_URL",
+                "port_var": "EDFX_MCP_PORT",
+                "name": "EDFX-MCP",
+                "default_port": "8080",
+                "description": "Company risk profile analysis tools"
+            },
+            {
+                "id": "rpa",
+                "url_var": "RPA_MCP_URL", 
+                "port_var": "RPA_MCP_PORT",
+                "name": "RPA-MCP",
+                "default_port": "8081",
+                "description": "Deal analysis and borrower relationship management tools"
+            },
+            {
+                "id": "analysis",
+                "url_var": "ANALYSIS_MCP_URL",
+                "port_var": "ANALYSIS_MCP_PORT", 
+                "name": "Analysis-MCP",
+                "default_port": "8082",
+                "description": "Portfolio metrics and performance analysis tools"
+            }
+        ]
         
-        # RPA MCP Server
-        if os.getenv("RPA_MCP_URL"):
-            configs["rpa"] = MCPServerConfig(
-                name="RPA-MCP", 
-                url=os.getenv("RPA_MCP_URL"),
-                port=int(os.getenv("RPA_MCP_PORT", "8081")),
-                description="Deal analysis and borrower relationship management tools"
-            )
+        # Load predefined servers
+        for server in predefined_servers:
+            if os.getenv(server["url_var"]):
+                configs[server["id"]] = MCPServerConfig(
+                    name=server["name"],
+                    url=os.getenv(server["url_var"]),
+                    port=int(os.getenv(server["port_var"], server["default_port"])),
+                    description=server["description"]
+                )
         
-        # Analysis MCP Server
-        if os.getenv("ANALYSIS_MCP_URL"):
-            configs["analysis"] = MCPServerConfig(
-                name="Analysis-MCP",
-                url=os.getenv("ANALYSIS_MCP_URL"), 
-                port=int(os.getenv("ANALYSIS_MCP_PORT", "8082")),
-                description="Portfolio metrics and performance analysis tools"
-            )
+        # === Dynamic MCP Server Discovery ===
+        # Pattern: MCP_SERVER_{NAME}_URL, MCP_SERVER_{NAME}_PORT, MCP_SERVER_{NAME}_DESC
+        env_vars = dict(os.environ)
+        mcp_servers = {}
+        
+        # Find all MCP_SERVER_*_URL variables
+        for key, value in env_vars.items():
+            if key.startswith("MCP_SERVER_") and key.endswith("_URL"):
+                # Extract server name: MCP_SERVER_MYSERVER_URL -> MYSERVER
+                server_name = key[11:-4]  # Remove "MCP_SERVER_" prefix and "_URL" suffix
+                server_id = server_name.lower()
+                
+                # Skip if already in predefined servers
+                if server_id in configs:
+                    continue
+                
+                # Get port and description
+                port_var = f"MCP_SERVER_{server_name}_PORT"
+                desc_var = f"MCP_SERVER_{server_name}_DESC"
+                
+                port = int(os.getenv(port_var, "8080"))  # Default port
+                description = os.getenv(desc_var, f"{server_name.title()} MCP Server")
+                
+                configs[server_id] = MCPServerConfig(
+                    name=f"{server_name.replace('_', '-').title()}-MCP",
+                    url=value,
+                    port=port,
+                    description=description
+                )
         
         return configs
+    
+    def add_server_config(self, server_id: str, name: str, url: str, port: int, description: str):
+        """Add a new MCP server configuration dynamically"""
+        self.server_configs[server_id] = MCPServerConfig(
+            name=name,
+            url=url,
+            port=port,
+            description=description
+        )
+    
+    def remove_server_config(self, server_id: str):
+        """Remove an MCP server configuration"""
+        if server_id in self.server_configs:
+            del self.server_configs[server_id]
+        if server_id in self.connected_servers:
+            self.connected_servers.remove(server_id)
+    
+    def list_server_configs(self) -> Dict[str, Dict[str, Any]]:
+        """List all configured servers with their details"""
+        servers = {}
+        for server_id, config in self.server_configs.items():
+            servers[server_id] = {
+                "name": config.name,
+                "url": config.url,
+                "port": config.port,
+                "description": config.description,
+                "connected": server_id in self.connected_servers
+            }
+        return servers
+    
+    async def connect_server(self, server_id: str) -> bool:
+        """Connect to a specific MCP server"""
+        if server_id not in self.server_configs:
+            print(f"❌ Server '{server_id}' not found in configurations")
+            return False
+        
+        config = self.server_configs[server_id]
+        try:
+            print(f"🔌 Connecting to {config.name} at {config.url}:{config.port}...")
+            
+            client = MCPClient(config.url, config.port)
+            success = await client.connect()
+            
+            if success:
+                self.mcp_clients[server_id] = client
+                self.mcp_adapters[server_id] = MCPToolAdapter(client)
+                if server_id not in self.connected_servers:
+                    self.connected_servers.append(server_id)
+                print(f"✅ Connected to {config.name}")
+                return True
+            else:
+                print(f"❌ Failed to connect to {config.name}")
+                return False
+                
+        except Exception as e:
+            print(f"❌ Error connecting to {config.name}: {e}")
+            return False
+    
+    async def disconnect_server(self, server_id: str) -> bool:
+        """Disconnect from a specific MCP server"""
+        if server_id in self.mcp_clients:
+            try:
+                client = self.mcp_clients[server_id]
+                if client.connected:
+                    await client.disconnect()
+                del self.mcp_clients[server_id]
+                del self.mcp_adapters[server_id]
+                if server_id in self.connected_servers:
+                    self.connected_servers.remove(server_id)
+                print(f"🔌 Disconnected from {server_id}")
+                return True
+            except Exception as e:
+                print(f"❌ Error disconnecting from {server_id}: {e}")
+                return False
+        return True
     
     async def connect_all_servers(self) -> Dict[str, bool]:
         """Connect to all configured MCP servers"""

@@ -1,7 +1,9 @@
 import asyncio
+import os
 from typing import Dict, Any
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_openai import ChatOpenAI
+from langchain_anthropic import ChatAnthropic
 from agent_state import AgentState, TaskRequest
 from tools import AgentTools
 from prompt_manager import PromptManager
@@ -13,20 +15,76 @@ from datetime import datetime
 class AgentNodes:
     """Agent nodes for the LangGraph workflow with separate planning and execution"""
     
-    def __init__(self, model_name: str = "gpt-4", mcp_client=None, prompt_manager: PromptManager = None, knowledge_base: KnowledgeBase = None):
-        self.llm = ChatOpenAI(model=model_name, temperature=0.1)
+    def __init__(self, model_name: str = "gpt-4o", mcp_client=None, prompt_manager: PromptManager = None, knowledge_base: KnowledgeBase = None):
+        # Determine API provider based on model name and available keys
+        self.model_name = model_name
+        self.llm = self._initialize_llm(model_name)
         self.tools = AgentTools(mcp_manager=mcp_client)  # Pass MCP manager to tools
         self.mcp_client = mcp_client  # MCP server client for external tools
         self.prompt_manager = prompt_manager or PromptManager()
         self.knowledge_base = knowledge_base or KnowledgeBase()
     
+    def _initialize_llm(self, model_name: str):
+        """Initialize LLM based on model name and available API keys"""
+        # Check for Anthropic models
+        anthropic_models = ["claude-3-5-sonnet-20241022", "claude-3-opus-20240229", "claude-3-sonnet-20240229", "claude-3-haiku-20240307"]
+        openai_models = ["gpt-4o", "gpt-4", "gpt-3.5-turbo", "gpt-4-turbo"]
+        
+        # Check available API keys
+        openai_key = os.getenv("OPENAI_API_KEY")
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        
+        if model_name in anthropic_models:
+            if not anthropic_key:
+                raise ValueError(f"ANTHROPIC_API_KEY is required for model {model_name}")
+            return ChatAnthropic(model=model_name, temperature=0.1)
+        elif model_name in openai_models:
+            if not openai_key:
+                raise ValueError(f"OPENAI_API_KEY is required for model {model_name}")
+            return ChatOpenAI(model=model_name, temperature=0.1)
+        else:
+            # Auto-detect based on available keys
+            if anthropic_key and model_name in anthropic_models:
+                return ChatAnthropic(model=model_name, temperature=0.1)
+            elif openai_key:
+                # Default to OpenAI if key is available
+                return ChatOpenAI(model=model_name, temperature=0.1)
+            elif anthropic_key:
+                # Fall back to Anthropic if only that key is available
+                return ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0.1)
+            else:
+                raise ValueError("Either OPENAI_API_KEY or ANTHROPIC_API_KEY must be set")
+    
     async def planning_node(self, state: AgentState) -> AgentState:
         """Planning node that creates a detailed execution plan"""
         try:
+            # Initialize state fields if not present
+            if "task_history" not in state:
+                state["task_history"] = []
+            if "research_results" not in state:
+                state["research_results"] = []
+            if "analysis_results" not in state:
+                state["analysis_results"] = {}
+            if "tools_used" not in state:
+                state["tools_used"] = []
+            if "error_log" not in state:
+                state["error_log"] = []
+            if "context" not in state:
+                state["context"] = {}
+            
             current_task = state.get("current_task", "")
             messages = state.get("messages", [])
             iteration_count = state.get("iteration_count", 0)
             max_iterations = state.get("max_iterations", 10)
+            
+            # Extract current_task from messages if not set
+            if not current_task and messages:
+                for msg in reversed(messages):
+                    if hasattr(msg, 'type') and msg.type == "human":
+                        current_task = msg.content
+                        state["current_task"] = current_task
+                        state["task_history"].append(current_task)
+                        break
             
             # Check if we've exceeded max iterations
             if iteration_count >= max_iterations:
@@ -75,12 +133,9 @@ class AgentNodes:
             state["context"]["current_step"] = 0
             state["iteration_count"] = iteration_count + 1
             
-            state["messages"].append({
-                "role": "planner",
-                "content": f"Execution plan created with {len(plan['steps'])} steps",
-                "timestamp": datetime.now().isoformat(),
-                "plan": plan
-            })
+            state["messages"].append(AIMessage(
+                content=f"Execution plan created with {len(plan['steps'])} steps: {json.dumps(plan, indent=2)}"
+            ))
             
             return state
             
@@ -116,12 +171,9 @@ class AgentNodes:
             description = current_step.get("description", "")
             tools_needed = current_step.get("tools_needed", [])
             
-            state["messages"].append({
-                "role": "executor",
-                "content": f"Executing step {current_step_index + 1}: {description}",
-                "timestamp": datetime.now().isoformat(),
-                "step": current_step
-            })
+            state["messages"].append(AIMessage(
+                content=f"Executing step {current_step_index + 1}: {description}"
+            ))
             
             # Execute based on action type
             if action == "research":
@@ -260,11 +312,9 @@ class AgentNodes:
     async def _execute_generic_step(self, state: AgentState, step: Dict[str, Any]):
         """Execute a generic step"""
         # Log the step execution
-        state["messages"].append({
-            "role": "executor",
-            "content": f"Executed generic step: {step.get('description', '')}",
-            "timestamp": datetime.now().isoformat()
-        })
+        state["messages"].append(AIMessage(
+            content=f"Executed generic step: {step.get('description', '')}"
+        ))
     
     async def research_node(self, state: AgentState) -> AgentState:
         """Research node that gathers information using prompts and knowledge"""
@@ -321,11 +371,9 @@ class AgentNodes:
                 
                 state["tools_used"].append("web_search")
                 
-                state["messages"].append({
-                    "role": "researcher",
-                    "content": f"Research and analysis completed for: {current_task}",
-                    "timestamp": datetime.now().isoformat()
-                })
+                state["messages"].append(AIMessage(
+                    content=f"Research and analysis completed for: {current_task}"
+                ))
             else:
                 state["error_log"].append(f"Research failed: {search_result.error}")
                 
@@ -470,9 +518,102 @@ class AgentNodes:
             state["final_answer"] = f"Error in summarization: {str(e)}"
             return state
     
+    async def conversational_node(self, state: AgentState) -> AgentState:
+        """Conversational node that handles multi-round conversations and generates responses"""
+        try:
+            messages = state.get("messages", [])
+            current_task = state.get("current_task", "")
+            research_results = state.get("research_results", [])
+            analysis_results = state.get("analysis_results", {})
+            context = state.get("context", {})
+            
+            # Build conversation context
+            conversation_context = []
+            
+            # Determine conversation context depth based on message count
+            is_ongoing_conversation = len(messages) > 2
+            context_window = 10 if is_ongoing_conversation else 6
+            
+            # Add enhanced system message for multi-round conversations
+            if is_ongoing_conversation:
+                system_content = f"""You are a helpful AI assistant engaged in an ongoing conversation. 
+
+Previous Context:
+- Current topic: {current_task}
+- Research data available: {len(research_results)} results
+- Analysis data available: {bool(analysis_results)}
+- Conversation length: {len(messages)} messages
+
+Instructions:
+- Maintain conversational flow and context from previous messages
+- Reference earlier parts of the conversation when relevant
+- Provide natural, engaging responses that build on the discussion
+- If asked follow-up questions, connect them to previous context
+- Be conversational and personable while remaining helpful"""
+            else:
+                system_content = f"""You are a helpful AI assistant starting a new conversation.
+
+Available Resources:
+- Research capabilities: {len(research_results)} results available
+- Analysis capabilities: {bool(analysis_results)}
+
+Instructions:
+- Provide helpful, conversational responses
+- Be friendly and engaging
+- If you need more information, explain what additional research or analysis would be helpful"""
+            
+            system_msg = SystemMessage(content=system_content)
+            conversation_context.append(system_msg)
+            
+            # Add conversation history with smart windowing
+            recent_messages = messages[-context_window:] if len(messages) > context_window else messages
+            for msg in recent_messages:
+                if hasattr(msg, 'content') and hasattr(msg, 'type'):
+                    conversation_context.append(msg)
+            
+            # Add available information as context
+            if research_results:
+                research_summary = f"Research findings: {research_results[:2]}"  # First 2 results
+                conversation_context.append(SystemMessage(content=research_summary))
+            
+            if analysis_results:
+                analysis_summary = f"Analysis results available: {str(analysis_results)[:200]}..."
+                conversation_context.append(SystemMessage(content=analysis_summary))
+            
+            # Generate conversational response
+            response = await self.llm.ainvoke(conversation_context)
+            
+            # Add AI response to messages
+            ai_message = AIMessage(content=response.content)
+            state["messages"].append(ai_message)
+            
+            # Set final_answer for this conversation turn
+            state["final_answer"] = response.content
+            
+            # Mark conversation as ready for next turn
+            state["context"]["conversation_ready"] = True
+            state["tools_used"].append("conversational_response")
+            
+            return state
+            
+        except Exception as e:
+            error_msg = f"Conversational node error: {str(e)}"
+            state["error_log"].append(error_msg)
+            # Provide a basic response even if there's an error
+            ai_message = AIMessage(content=f"I encountered an error while processing your request: {str(e)}. Please try rephrasing your question.")
+            state["messages"].append(ai_message)
+            state["final_answer"] = ai_message.content
+            return state
+    
     async def completion_node(self, state: AgentState) -> AgentState:
         """Final node that completes the workflow"""
         try:
+            # Check if this is a conversational task that should continue
+            context = state.get("context", {})
+            if context.get("conversation_ready"):
+                # Don't generate a summary for conversational tasks, just mark as complete
+                return state
+            
             if not state.get("final_answer"):
                 # Generate a final answer based on available information
                 research_count = len(state.get("research_results", []))
@@ -489,12 +630,6 @@ Iterations: {state.get('iteration_count', 0)}
 {'Errors encountered: ' + str(len(state.get('error_log', []))) if state.get('error_log') else 'No errors'}"""
                 
                 state["final_answer"] = final_summary
-            
-            state["messages"].append({
-                "role": "completion",
-                "content": "Workflow completed successfully",
-                "timestamp": datetime.now().isoformat()
-            })
             
             return state
             
